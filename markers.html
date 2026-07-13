@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Markers | MR Hands-on</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 24px; line-height: 1.6; }
+    h1 { margin: 0 0 4px; }
+    .note { color: #555; max-width: 46em; }
+    .sheet { text-align: center; margin: 32px 0; }
+    .sheet img {
+      width: 120mm; max-width: 90vw; height: auto;
+      border: 1px solid #ddd;
+    }
+    .sheet h2 { font-size: 28px; margin: 0 0 8px; letter-spacing: 2px; }
+    a { color: #06c; }
+
+    @media print {
+      /* One marker per sheet. The white border around the pattern is the
+         marker's quiet zone -- do not crop it, and do not scale to fit. */
+      body { padding: 0; }
+      .screen-only { display: none; }
+      .sheet { page-break-after: always; margin: 0; padding-top: 30mm; }
+      .sheet img { width: 120mm; border: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="screen-only">
+    <h1>Markers</h1>
+    <p class="note">
+      Print this page (one marker per sheet, <b>100% scale, no "fit to page"</b>),
+      or just show it on a screen. Both work. Paper tracks more reliably than a
+      glossy screen, because a screen adds glare and its own refresh flicker.
+      <br />
+      Keep the white border: it is the quiet zone the tracker needs to find the
+      edges of the marker.
+      <br /><br />
+      <a href="./index.html">Back to hub</a>
+    </p>
+  </div>
+
+  <div class="sheet">
+    <h2>MARKER A</h2>
+    <img src="./assets/markerA.png" alt="Marker A" />
+  </div>
+
+  <div class="sheet">
+    <h2>MARKER B</h2>
+    <img src="./assets/markerB.png" alt="Marker B" />
+  </div>
+
+</body>
+</html>

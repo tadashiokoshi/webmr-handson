@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Stage 1: Primitives | MR Hands-on</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; font-family: sans-serif; }
+    #hud {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+      background: rgba(0, 0, 0, 0.7); color: #fff;
+      font-size: 15px; line-height: 1.6; padding: 10px 12px;
+      padding-top: calc(10px + env(safe-area-inset-top));
+    }
+    #hud a { color: #7cf; }
+    #status { color: #fd6; }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <b>Stage 1: Primitives</b> &mdash; point your camera at Marker A<br />
+    <span id="status">Looking for the marker&hellip;</span> &middot; <a href="./index.html">Back to hub</a>
+  </div>
+
+  <a-scene
+    mindar-image="imageTargetSrc: ./assets/targets.mind; filterMinCF: 0.0001; filterBeta: 0.001;"
+    color-space="sRGB"
+    renderer="colorManagement: true; physicallyCorrectLights: true;"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false">
+
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+    <a-light type="ambient" intensity="1"></a-light>
+
+    <!-- targetIndex 0 = Marker A.
+         Coordinates are normalised so the marker's WIDTH is exactly 1.
+         +X is right across the marker, +Y is up across the marker,
+         and +Z points OUT of the marker surface (toward you). So if the
+         marker is lying flat on a desk, +Z is the direction of "up". -->
+    <a-entity mindar-image-target="targetIndex: 0">
+
+      <!-- ==== TASK 1: change these four values and reload ====
+           color    : any CSS colour, e.g. #ff0000
+           position : x y z. Increase z to lift the box off the marker
+           scale    : 1 would be exactly as wide as the marker
+           rotation : degrees
+      -->
+      <a-box
+        color="#4488ff"
+        position="0 0 0.25"
+        scale="0.5 0.5 0.5"
+        rotation="0 0 0"
+        animation="property: rotation; to: 0 0 360; dur: 4000; loop: true; easing: linear">
+      </a-box>
+      <!-- ==== end of TASK 1 ==== -->
+
+      <!-- TASK 2: replace <a-box> with <a-sphere>, <a-cone>, <a-torus>
+           or <a-dodecahedron>. Keep the same attributes. -->
+
+      <!-- TASK 3: the animation above spins the box around the Z axis
+           (the axis sticking out of the marker). Change "to" to
+           "0 360 0" and explain what changed, and why. -->
+
+    </a-entity>
+  </a-scene>
+
+  <script>
+    // Surface tracking state, so the moment tracking BREAKS is visible.
+    // That failure is the point of the exercise, not a bug.
+    const status = document.getElementById('status');
+    const target = document.querySelector('[mindar-image-target]');
+    target.addEventListener('targetFound', () => {
+      status.textContent = '✅ Tracking Marker A';
+    });
+    target.addEventListener('targetLost', () => {
+      status.textContent = '❌ Lost the marker';
+    });
+  </script>
+</body>
+</html>
