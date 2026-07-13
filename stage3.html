@@ -2,315 +2,27 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Stage 3: Marker + IMU | MR Hands-on</title>
+  <title>Stage 3: Build a Scene | MR Hands-on</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
-  <style>
-    html, body { margin: 0; height: 100%; overflow: hidden; font-family: sans-serif; }
-    #hud {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 10;
-      background: rgba(0, 0, 0, 0.7); color: #fff;
-      font-size: 15px; line-height: 1.6; padding: 10px 12px;
-      padding-top: calc(10px + env(safe-area-inset-top));
-    }
-    #hud a { color: #7cf; }
-    #status { color: #fd6; }
-    #bottom {
-      position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
-      background: rgba(0, 0, 0, 0.78);
-      padding-bottom: calc(8px + env(safe-area-inset-bottom));
-    }
-    #controls { display: flex; gap: 8px; padding: 8px 12px 0; }
-    #controls button {
-      flex: 1; font: 600 14px/1.3 sans-serif; padding: 10px 4px;
-      border-radius: 8px; border: 1px solid #888;
-      background: #222; color: #fff; touch-action: manipulation;
-    }
-    #controls button.on { background: #06c; border-color: #7cf; }
-    #controls button:disabled { opacity: 0.4; }
-    #model-info {
-      color: #6f6; font: 13px/1.5 monospace; padding: 8px 12px 0;
-      white-space: pre-wrap;
-    }
-    #model-info.error { color: #f77; }
-  </style>
-
-  <script>
-    /* fit-model — same component as stage 2: measures the model in its own
-     * units and scales it so its biggest dimension ends up `size` marker
-     * widths, then stands it on the marker surface. See stage2.html for the
-     * full story of why. */
-    AFRAME.registerComponent('fit-model', {
-      schema: {
-        size: { type: 'number', default:  1.5 }
-      },
-
-      init: function () {
-        this.info = document.querySelector('#model-info');
-        this.el.addEventListener('model-loaded', (e) => this.onLoad(e.detail.model));
-        this.el.addEventListener('model-error', () => {
-          this.report('could not load the model.\ncheck the file name, and that it really is in assets/', true);
-        });
-      },
-
-      report: function (text, isError) {
-        this.info.textContent = text;
-        this.info.classList.toggle('error', !!isError);
-      },
-
-      measure: function (model) {
-        const box = new THREE.Box3();
-        const part = new THREE.Box3();
-
-        const walk = (obj, parentMatrix) => {
-          obj.updateMatrix();
-          const matrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, obj.matrix);
-          if (obj.geometry) {
-            if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
-            part.copy(obj.geometry.boundingBox).applyMatrix4(matrix);
-            box.union(part);
-          }
-          obj.children.forEach((child) => walk(child, matrix));
-        };
-        walk(model, new THREE.Matrix4());
-
-        return box;
-      },
-
-      onLoad: function (model) {
-        const box = this.measure(model);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const biggest = Math.max(size.x, size.y, size.z);
-        if (!(biggest > 0)) {
-          this.report('the model loaded but has no size. is it empty?', true);
-          return;
-        }
-
-        this.el.object3D.scale.setScalar(this.data.size / biggest);
-
-        const centre = new THREE.Vector3();
-        box.getCenter(centre);
-        model.position.x -= centre.x;
-        model.position.z -= centre.z;
-        model.position.y -= box.min.y;
-
-        this.report(
-          'this model is ' + biggest.toFixed(1) + ' units across, scaled by ' +
-          (this.data.size / biggest).toFixed(4) + '.'
-        );
-      }
-    });
-  </script>
-
-  <script>
-    /* imu-fusion
-     *
-     * Stages 1 and 2 have one source of truth: the marker. Lose it and the
-     * pose is simply gone — the model vanishes. This page adds a second
-     * source of truth, the phone's motion sensors (the IMU), and runs the
-     * predict–correct loop that every real tracking system runs:
-     *
-     *   marker visible → LOCALIZATION (correct). The marker gives the true
-     *       pose. Adopt it, remember it, and zero everything the IMU has
-     *       accumulated. Every sighting wipes the drift clean.
-     *   marker lost    → TRACKING (predict, "dead reckoning"). Start from the
-     *       remembered pose and push it along with what the IMU reports.
-     *
-     * The two IMU channels the buttons switch on and off are NOT equals,
-     * and feeling the difference is the exercise:
-     *
-     *   rotation    — the OS already fuses gyro + accelerometer into an
-     *       orientation. It drifts slowly. Coasting on it genuinely works.
-     *   translation — acceleration must be integrated TWICE to give a
-     *       position. Every tiny sensor bias becomes a velocity that never
-     *       goes away, so the error grows with time squared: unusable within
-     *       seconds. That is not a bug in this page — it is the reason real
-     *       AR trackers fuse the camera image with the IMU (visual-inertial
-     *       odometry) instead of ever trusting the IMU alone for position.
-     *   both off    — hold the last marker pose. The model freezes instead
-     *       of vanishing.
-     *
-     * The model does NOT live under the MindAR anchor: while the marker is
-     * lost, MindAR keeps stamping the anchor invisible and parking its
-     * matrix off-screen on every video frame, so we would be fighting it.
-     * The anchor stays empty — a pure sensor — and this component drives a
-     * separate entity, copying the anchor's matrix while the marker is
-     * visible.
-     *
-     * The maths in one line: with camera orientation C(t) from the IMU and
-     * the marker pose M0 remembered at the last sighting t0,
-     *     M(t) = C(t)^-1 · C(t0) · M0
-     * — undo whatever the phone has done since t0, then re-apply the old
-     * pose. Translation enters as the double-integrated displacement,
-     * rotated into the camera frame the same way.
-     */
-
-    // The printed target image is 120 mm wide (markers.html at 100% scale,
-    // white border included). The IMU measures metres, MindAR's world units
-    // are marker-relative, and this constant is the bridge: if your marker
-    // is a different size, translation coasting is proportionally wrong.
-    const MARKER_WIDTH_M = 0.12;
-
-    // Safari reports devicemotion acceleration with the opposite sign to the
-    // spec (and to Android). If translation coasting moves the model the
-    // WRONG WAY on your phone, this is the first thing to suspect.
-    const ACCEL_SIGN = /iPhone|iPad|iPod/.test(navigator.userAgent) ? -1 : 1;
-
-    AFRAME.registerComponent('imu-fusion', {
-      schema: {
-        anchor: { type: 'selector' }
-      },
-
-      init: function () {
-        const o = this.el.object3D;
-        o.visible = false;
-        // Same trick MindAR itself uses: we own this matrix, nothing else
-        // composes it from position/rotation/scale attributes.
-        o.matrixAutoUpdate = false;
-
-        this.rotationOn = false;
-        this.translationOn = false;
-
-        this.hasFix = false;
-        this.M0 = new THREE.Matrix4();      // marker pose at the last sighting
-        this.q0 = new THREE.Quaternion();   // camera orientation at that moment
-        this.unitsPerMetre = 1;
-
-        this.qCam = new THREE.Quaternion(); // camera orientation, live from the IMU
-        this.haveOrientation = false;
-        this.vel = new THREE.Vector3();     // world-frame velocity (m/s)
-        this.disp = new THREE.Vector3();    // world-frame drift since the fix (m)
-
-        // scratch objects, allocated once — tick runs 60 times a second
-        this._euler = new THREE.Euler();
-        this._qScreen = new THREE.Quaternion();
-        // -90° about X: the sensors' Z-up earth frame → three.js Y-up world
-        this._qEarth = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
-        this._zee = new THREE.Vector3(0, 0, 1);
-        this._dR = new THREE.Quaternion();
-        this._qInv = new THREE.Quaternion();
-        this._t = new THREE.Vector3();
-        this._one = new THREE.Vector3(1, 1, 1);
-        this._dT = new THREE.Matrix4();
-        this._a = new THREE.Vector3();
-
-        this.onOrientation = this.onOrientation.bind(this);
-        this.onMotion = this.onMotion.bind(this);
-      },
-
-      // Ask iOS for sensor permission (only works inside a button tap), then
-      // start listening. Android has nothing to ask. Both prompts must be
-      // fired synchronously inside the tap, hence Promise.all.
-      enable: function () {
-        const asks = [];
-        if (window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) {
-          asks.push(DeviceOrientationEvent.requestPermission());
-        }
-        if (window.DeviceMotionEvent && DeviceMotionEvent.requestPermission) {
-          asks.push(DeviceMotionEvent.requestPermission());
-        }
-        return Promise.all(asks).then((answers) => {
-          if (answers.some((a) => a !== 'granted')) throw new Error('permission denied');
-          window.addEventListener('deviceorientation', this.onOrientation);
-          window.addEventListener('devicemotion', this.onMotion);
-        });
-      },
-
-      screenAngle: function () {
-        return (screen.orientation && screen.orientation.angle) || window.orientation || 0;
-      },
-
-      // Orientation sensors → camera orientation in a Y-up world. This is
-      // the classic three.js DeviceOrientationControls formula, including
-      // the screen-rotation term.
-      onOrientation: function (e) {
-        if (e.alpha === null) return;
-        const rad = THREE.MathUtils.degToRad;
-        this._euler.set(rad(e.beta), rad(e.alpha), -rad(e.gamma), 'YXZ');
-        this.qCam.setFromEuler(this._euler);
-        this.qCam.multiply(this._qEarth);
-        this.qCam.multiply(this._qScreen.setFromAxisAngle(this._zee, -rad(this.screenAngle())));
-        this.haveOrientation = true;
-      },
-
-      // Accelerometer → velocity → displacement. This is the naive double
-      // integration the header comment warns about. No filtering, no damping,
-      // ON PURPOSE: you are meant to watch it diverge.
-      onMotion: function (e) {
-        const a = e.acceleration; // gravity already removed by the OS
-        if (!a || a.x === null || !this.haveOrientation) return;
-        let dt = e.interval || 1 / 60;
-        if (dt > 1) dt = dt / 1000;         // spec says ms, some browsers send seconds
-        if (!(dt > 0) || dt > 0.1) return;  // a hiccup — integrating it only makes it worse
-        this._a.set(a.x, a.y, a.z).multiplyScalar(ACCEL_SIGN);
-        // device axes → camera axes (they differ when the screen is rotated),
-        // then camera axes → world axes with the live orientation
-        this._a.applyQuaternion(this._qScreen.setFromAxisAngle(this._zee, THREE.MathUtils.degToRad(this.screenAngle())));
-        this._a.applyQuaternion(this.qCam);
-        this.vel.addScaledVector(this._a, dt);
-        this.disp.addScaledVector(this.vel, dt);
-      },
-
-      tick: function () {
-        const anchorObj = this.data.anchor.object3D;
-        const o = this.el.object3D;
-
-        if (anchorObj.visible) {
-          // CORRECT: the marker is the truth. Adopt its pose, wipe the drift.
-          o.matrix.copy(anchorObj.matrix);
-          this.M0.copy(anchorObj.matrix);
-          this.q0.copy(this.qCam);
-          // The anchor matrix's scale converts marker widths → world units;
-          // dividing by the printed width makes metres convert too.
-          this.unitsPerMetre = this.M0.getMaxScaleOnAxis() / MARKER_WIDTH_M;
-          this.vel.set(0, 0, 0);
-          this.disp.set(0, 0, 0);
-          this.hasFix = true;
-          o.visible = true;
-          return;
-        }
-
-        if (!this.hasFix) return; // never seen the marker yet: nothing to hold
-
-        // PREDICT: start from the remembered pose, apply the IMU deltas.
-        // With both toggles off this collapses to M(t) = M0 — frozen in
-        // place, not flung off-screen. And the jump you see when the marker
-        // is found again is not a glitch: it is the correction, made visible.
-        if (this.rotationOn && this.haveOrientation) {
-          this._dR.copy(this.qCam).invert().multiply(this.q0);
-        } else {
-          this._dR.identity();
-        }
-        this._t.set(0, 0, 0);
-        if (this.translationOn && this.haveOrientation) {
-          this._t.copy(this.disp)
-            .multiplyScalar(-this.unitsPerMetre)
-            .applyQuaternion(this._qInv.copy(this.qCam).invert());
-        }
-        this._dT.compose(this._t, this._dR, this._one);
-        o.matrix.multiplyMatrices(this._dT, this.M0);
-      }
-    });
-  </script>
+  <script src="./stage3.js"></script>
+  <link rel="stylesheet" href="./stage3.css" />
 </head>
 <body>
 
   <div id="hud">
-    <b>Stage 3: Marker + IMU</b> &mdash; find Marker A, then hide it on purpose<br />
+    <b>Stage 3: Build a Scene</b> &mdash; point your camera at Marker A<br />
     <span id="status">Looking for the marker&hellip;</span> &middot; <a href="./index.html">Back to hub</a>
   </div>
 
   <div id="bottom">
     <div id="controls">
-      <button id="btn-imu">Enable IMU</button>
-      <button id="btn-rot" disabled>Rotation: off</button>
-      <button id="btn-trans" disabled>Translation: off</button>
+      <button id="btn-imu">Enable IMU (look around without the marker)</button>
     </div>
-    <div id="model-info">loading the model&hellip;</div>
+    <div id="model-info">no model loaded yet &mdash; see Stage3-HowToBuildScene.md</div>
   </div>
 
   <a-scene
@@ -325,109 +37,20 @@
     <a-light type="ambient" intensity="0.8"></a-light>
     <a-light type="directional" intensity="0.6" position="1 1 1"></a-light>
 
-    <!-- The anchor is EMPTY: it is only a sensor. See the imu-fusion
-         header comment for why the model cannot live under it. -->
+    <!-- The anchor is empty on purpose: it is only a sensor. -->
     <a-entity id="anchor" mindar-image-target="targetIndex: 0"></a-entity>
 
     <a-entity id="fused" imu-fusion="anchor: #anchor">
+      <!-- marker frame -> Y-up frame: +X right, +Y up in the air, -Z away -->
       <a-entity rotation="90 0 0">
-        <a-entity
-          gltf-model="./assets/Adventurer.glb"
-          fit-model="size: 1.5">
+        <a-entity id="world" real-units>
+
+          <!-- ==== YOUR SCENE ==== -->
+
         </a-entity>
       </a-entity>
     </a-entity>
 
-    <!-- ==== TASKS ====
-         Everything here is about what happens AFTER the marker disappears:
-         find it first, then cover it completely with your hand or flip it over.
-
-         1. IMU off. Hide the marker. The model freezes — but glued to WHAT?
-            Rotate the phone and watch: it moves with the screen, not with
-            the room.
-         2. Tap "Enable IMU" and switch Rotation ON. Hide the marker, rotate
-            the phone again: now it stays put in the room. Then WALK half a
-            metre sideways. Why does it come along with you this time?
-         3. Switch Translation ON. Hide the marker, hold the phone as still
-            as you can, and just watch the drift number climb. Then try to
-            walk around the model. How many seconds until it is nonsense?
-            This is why no real AR system trusts an IMU alone for position
-            (look up: visual-inertial odometry) — and the snap when the
-            marker comes back is the localization correction doing its job.
-         4. The translation scale assumes your printed marker is 120 mm wide
-            (MARKER_WIDTH_M at the top of the script). Measure yours with a
-            ruler and fix the constant.
-    -->
-
   </a-scene>
-
-  <script>
-    const status = document.getElementById('status');
-    const anchor = document.querySelector('#anchor');
-    const fusedEl = document.querySelector('#fused');
-    const btnImu = document.getElementById('btn-imu');
-    const btnRot = document.getElementById('btn-rot');
-    const btnTrans = document.getElementById('btn-trans');
-
-    const fusion = () => fusedEl.components['imu-fusion'];
-
-    let markerVisible = false;
-    anchor.addEventListener('targetFound', () => { markerVisible = true; });
-    anchor.addEventListener('targetLost', () => { markerVisible = false; });
-
-    btnImu.addEventListener('click', () => {
-      fusion().enable().then(() => {
-        btnImu.disabled = true;
-        btnImu.textContent = 'IMU: on';
-        btnRot.disabled = false;
-        btnTrans.disabled = false;
-      }).catch((err) => {
-        btnImu.textContent = 'IMU blocked (' + err.message + ')';
-      });
-    });
-
-    btnRot.addEventListener('click', () => {
-      const f = fusion();
-      f.rotationOn = !f.rotationOn;
-      btnRot.textContent = 'Rotation: ' + (f.rotationOn ? 'ON' : 'off');
-      btnRot.classList.toggle('on', f.rotationOn);
-    });
-
-    btnTrans.addEventListener('click', () => {
-      const f = fusion();
-      f.translationOn = !f.translationOn;
-      // Restart the integration when switched on: rotation-since-the-fix is
-      // real information, but displacement-since-the-fix is accumulated
-      // noise, and applying it retroactively would just teleport the model.
-      if (f.translationOn) { f.vel.set(0, 0, 0); f.disp.set(0, 0, 0); }
-      btnTrans.textContent = 'Translation: ' + (f.translationOn ? 'ON' : 'off');
-      btnTrans.classList.toggle('on', f.translationOn);
-    });
-
-    setInterval(() => {
-      const f = fusion();
-      if (!f) return;
-      if (markerVisible) {
-        status.textContent = '✅ Marker A — the marker corrects the pose';
-        return;
-      }
-      if (!f.hasFix) {
-        status.textContent = 'Looking for the marker…';
-        return;
-      }
-      const parts = [];
-      if (f.rotationOn) parts.push('rotation');
-      if (f.translationOn) parts.push('translation');
-      if (!parts.length) {
-        status.textContent = '❌ Marker lost — frozen at the last pose';
-      } else if (!f.haveOrientation) {
-        status.textContent = '❌ Marker lost — no IMU data yet?';
-      } else {
-        let text = '❌ Marker lost — coasting on IMU (' + parts.join(' + ') + ')';
-        if (f.translationOn) text += ' · drift ' + f.disp.length().toFixed(2) + ' m';
-        status.textContent = text;
-      }
-    }, 100);
-  </script>
 </body>
 </html>

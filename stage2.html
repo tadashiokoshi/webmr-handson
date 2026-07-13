@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Stage 2: 3D Model | MR Hands-on</title>
+  <title>Stage 2: Marker + IMU | MR Hands-on</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -18,34 +18,34 @@
     }
     #hud a { color: #7cf; }
     #status { color: #fd6; }
-    #model-info {
+    #bottom {
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
-      background: rgba(0, 0, 0, 0.78); color: #6f6;
-      font: 13px/1.5 monospace; padding: 8px 12px;
+      background: rgba(0, 0, 0, 0.78);
       padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    }
+    #controls { display: flex; gap: 8px; padding: 8px 12px 0; }
+    #controls button {
+      flex: 1; font: 600 14px/1.3 sans-serif; padding: 10px 4px;
+      border-radius: 8px; border: 1px solid #888;
+      background: #222; color: #fff; touch-action: manipulation;
+    }
+    #controls button.on { background: #06c; border-color: #7cf; }
+    #controls button:disabled { opacity: 0.4; }
+    #model-info {
+      color: #6f6; font: 13px/1.5 monospace; padding: 8px 12px 0;
       white-space: pre-wrap;
     }
     #model-info.error { color: #f77; }
   </style>
 
   <script>
-    /* fit-model
-     *
-     * Makes any .glb work without you having to know anything about it first.
-     *
-     * Models come in whatever units their author felt like using. The one below
-     * is about 1.9 units tall; a model from Khronos is 155; one from poly.pizza
-     * is 84. A single hard-coded scale factor would make one of them microscopic
-     * and another the size of a building. So you do not give a scale factor at
-     * all: you say how big you want it to END UP, in marker widths, and this
-     * measures the model and works the rest out.
-     *
-     * What it measured is printed at the bottom of the screen. You are on a
-     * phone; you have no console.
-     */
+    /* fit-model — same component as stage 1: measures the model in its own
+     * units and scales it so its biggest dimension ends up `size` marker
+     * widths, then stands it on the marker surface. See stage1.html for the
+     * full story of why. */
     AFRAME.registerComponent('fit-model', {
       schema: {
-        size: { type: 'number', default: 0.6 }  // biggest dimension, in marker widths
+        size: { type: 'number', default:  1.5 }
       },
 
       init: function () {
@@ -61,13 +61,6 @@
         this.info.classList.toggle('error', !!isError);
       },
 
-      // Size of the model in its OWN units, walking only LOCAL matrices.
-      //
-      // Not world matrices. Until the marker has actually been seen, the anchor
-      // above us has a degenerate transform, so anything derived from
-      // matrixWorld either comes out zero or divides by it -- and the model
-      // finishes downloading at an unpredictable moment relative to the first
-      // sighting. Local matrices are true from the instant the model exists.
       measure: function (model) {
         const box = new THREE.Box3();
         const part = new THREE.Box3();
@@ -99,8 +92,6 @@
 
         this.el.object3D.scale.setScalar(this.data.size / biggest);
 
-        // Centre it on the marker and stand it on the surface, rather than
-        // letting it half-sink into the paper.
         const centre = new THREE.Vector3();
         box.getCenter(centre);
         model.position.x -= centre.x;
@@ -108,10 +99,200 @@
         model.position.y -= box.min.y;
 
         this.report(
-          'this model is ' + biggest.toFixed(1) + ' units across.\n' +
-          'scaled by ' + (this.data.size / biggest).toFixed(4) +
-          ' to be ' + this.data.size + ' marker widths.'
+          'this model is ' + biggest.toFixed(1) + ' units across, scaled by ' +
+          (this.data.size / biggest).toFixed(4) + '.'
         );
+      }
+    });
+  </script>
+
+  <script>
+    /* imu-fusion
+     *
+     * Stage 1 has one source of truth: the marker. Lose it and the
+     * pose is simply gone — the model vanishes. This page adds a second
+     * source of truth, the phone's motion sensors (the IMU), and runs the
+     * predict–correct loop that every real tracking system runs:
+     *
+     *   marker visible → LOCALIZATION (correct). The marker gives the true
+     *       pose. Adopt it, remember it, and zero everything the IMU has
+     *       accumulated. Every sighting wipes the drift clean.
+     *   marker lost    → TRACKING (predict, "dead reckoning"). Start from the
+     *       remembered pose and push it along with what the IMU reports.
+     *
+     * The two IMU channels the buttons switch on and off are NOT equals,
+     * and feeling the difference is the exercise:
+     *
+     *   rotation    — the OS already fuses gyro + accelerometer into an
+     *       orientation. It drifts slowly. Coasting on it genuinely works.
+     *   translation — acceleration must be integrated TWICE to give a
+     *       position. Every tiny sensor bias becomes a velocity that never
+     *       goes away, so the error grows with time squared: unusable within
+     *       seconds. That is not a bug in this page — it is the reason real
+     *       AR trackers fuse the camera image with the IMU (visual-inertial
+     *       odometry) instead of ever trusting the IMU alone for position.
+     *   both off    — hold the last marker pose. The model freezes instead
+     *       of vanishing.
+     *
+     * The model does NOT live under the MindAR anchor: while the marker is
+     * lost, MindAR keeps stamping the anchor invisible and parking its
+     * matrix off-screen on every video frame, so we would be fighting it.
+     * The anchor stays empty — a pure sensor — and this component drives a
+     * separate entity, copying the anchor's matrix while the marker is
+     * visible.
+     *
+     * The maths in one line: with camera orientation C(t) from the IMU and
+     * the marker pose M0 remembered at the last sighting t0,
+     *     M(t) = C(t)^-1 · C(t0) · M0
+     * — undo whatever the phone has done since t0, then re-apply the old
+     * pose. Translation enters as the double-integrated displacement,
+     * rotated into the camera frame the same way.
+     */
+
+    // The printed target image is 120 mm wide (markers.html at 100% scale,
+    // white border included). The IMU measures metres, MindAR's world units
+    // are marker-relative, and this constant is the bridge: if your marker
+    // is a different size, translation coasting is proportionally wrong.
+    const MARKER_WIDTH_M = 0.12;
+
+    // Safari reports devicemotion acceleration with the opposite sign to the
+    // spec (and to Android). If translation coasting moves the model the
+    // WRONG WAY on your phone, this is the first thing to suspect.
+    const ACCEL_SIGN = /iPhone|iPad|iPod/.test(navigator.userAgent) ? -1 : 1;
+
+    AFRAME.registerComponent('imu-fusion', {
+      schema: {
+        anchor: { type: 'selector' }
+      },
+
+      init: function () {
+        const o = this.el.object3D;
+        o.visible = false;
+        // Same trick MindAR itself uses: we own this matrix, nothing else
+        // composes it from position/rotation/scale attributes.
+        o.matrixAutoUpdate = false;
+
+        this.rotationOn = false;
+        this.translationOn = false;
+
+        this.hasFix = false;
+        this.M0 = new THREE.Matrix4();      // marker pose at the last sighting
+        this.q0 = new THREE.Quaternion();   // camera orientation at that moment
+        this.unitsPerMetre = 1;
+
+        this.qCam = new THREE.Quaternion(); // camera orientation, live from the IMU
+        this.haveOrientation = false;
+        this.vel = new THREE.Vector3();     // world-frame velocity (m/s)
+        this.disp = new THREE.Vector3();    // world-frame drift since the fix (m)
+
+        // scratch objects, allocated once — tick runs 60 times a second
+        this._euler = new THREE.Euler();
+        this._qScreen = new THREE.Quaternion();
+        // -90° about X: the sensors' Z-up earth frame → three.js Y-up world
+        this._qEarth = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+        this._zee = new THREE.Vector3(0, 0, 1);
+        this._dR = new THREE.Quaternion();
+        this._qInv = new THREE.Quaternion();
+        this._t = new THREE.Vector3();
+        this._one = new THREE.Vector3(1, 1, 1);
+        this._dT = new THREE.Matrix4();
+        this._a = new THREE.Vector3();
+
+        this.onOrientation = this.onOrientation.bind(this);
+        this.onMotion = this.onMotion.bind(this);
+      },
+
+      // Ask iOS for sensor permission (only works inside a button tap), then
+      // start listening. Android has nothing to ask. Both prompts must be
+      // fired synchronously inside the tap, hence Promise.all.
+      enable: function () {
+        const asks = [];
+        if (window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) {
+          asks.push(DeviceOrientationEvent.requestPermission());
+        }
+        if (window.DeviceMotionEvent && DeviceMotionEvent.requestPermission) {
+          asks.push(DeviceMotionEvent.requestPermission());
+        }
+        return Promise.all(asks).then((answers) => {
+          if (answers.some((a) => a !== 'granted')) throw new Error('permission denied');
+          window.addEventListener('deviceorientation', this.onOrientation);
+          window.addEventListener('devicemotion', this.onMotion);
+        });
+      },
+
+      screenAngle: function () {
+        return (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+      },
+
+      // Orientation sensors → camera orientation in a Y-up world. This is
+      // the classic three.js DeviceOrientationControls formula, including
+      // the screen-rotation term.
+      onOrientation: function (e) {
+        if (e.alpha === null) return;
+        const rad = THREE.MathUtils.degToRad;
+        this._euler.set(rad(e.beta), rad(e.alpha), -rad(e.gamma), 'YXZ');
+        this.qCam.setFromEuler(this._euler);
+        this.qCam.multiply(this._qEarth);
+        this.qCam.multiply(this._qScreen.setFromAxisAngle(this._zee, -rad(this.screenAngle())));
+        this.haveOrientation = true;
+      },
+
+      // Accelerometer → velocity → displacement. This is the naive double
+      // integration the header comment warns about. No filtering, no damping,
+      // ON PURPOSE: you are meant to watch it diverge.
+      onMotion: function (e) {
+        const a = e.acceleration; // gravity already removed by the OS
+        if (!a || a.x === null || !this.haveOrientation) return;
+        let dt = e.interval || 1 / 60;
+        if (dt > 1) dt = dt / 1000;         // spec says ms, some browsers send seconds
+        if (!(dt > 0) || dt > 0.1) return;  // a hiccup — integrating it only makes it worse
+        this._a.set(a.x, a.y, a.z).multiplyScalar(ACCEL_SIGN);
+        // device axes → camera axes (they differ when the screen is rotated),
+        // then camera axes → world axes with the live orientation
+        this._a.applyQuaternion(this._qScreen.setFromAxisAngle(this._zee, THREE.MathUtils.degToRad(this.screenAngle())));
+        this._a.applyQuaternion(this.qCam);
+        this.vel.addScaledVector(this._a, dt);
+        this.disp.addScaledVector(this.vel, dt);
+      },
+
+      tick: function () {
+        const anchorObj = this.data.anchor.object3D;
+        const o = this.el.object3D;
+
+        if (anchorObj.visible) {
+          // CORRECT: the marker is the truth. Adopt its pose, wipe the drift.
+          o.matrix.copy(anchorObj.matrix);
+          this.M0.copy(anchorObj.matrix);
+          this.q0.copy(this.qCam);
+          // The anchor matrix's scale converts marker widths → world units;
+          // dividing by the printed width makes metres convert too.
+          this.unitsPerMetre = this.M0.getMaxScaleOnAxis() / MARKER_WIDTH_M;
+          this.vel.set(0, 0, 0);
+          this.disp.set(0, 0, 0);
+          this.hasFix = true;
+          o.visible = true;
+          return;
+        }
+
+        if (!this.hasFix) return; // never seen the marker yet: nothing to hold
+
+        // PREDICT: start from the remembered pose, apply the IMU deltas.
+        // With both toggles off this collapses to M(t) = M0 — frozen in
+        // place, not flung off-screen. And the jump you see when the marker
+        // is found again is not a glitch: it is the correction, made visible.
+        if (this.rotationOn && this.haveOrientation) {
+          this._dR.copy(this.qCam).invert().multiply(this.q0);
+        } else {
+          this._dR.identity();
+        }
+        this._t.set(0, 0, 0);
+        if (this.translationOn && this.haveOrientation) {
+          this._t.copy(this.disp)
+            .multiplyScalar(-this.unitsPerMetre)
+            .applyQuaternion(this._qInv.copy(this.qCam).invert());
+        }
+        this._dT.compose(this._t, this._dR, this._one);
+        o.matrix.multiplyMatrices(this._dT, this.M0);
       }
     });
   </script>
@@ -119,13 +300,21 @@
 <body>
 
   <div id="hud">
-    <b>Stage 2: 3D Model</b> &mdash; point your camera at Marker A<br />
+    <b>Stage 2: Marker + IMU</b> &mdash; find Marker A, then hide it on purpose<br />
     <span id="status">Looking for the marker&hellip;</span> &middot; <a href="./index.html">Back to hub</a>
   </div>
-  <div id="model-info">loading the model&hellip;</div>
+
+  <div id="bottom">
+    <div id="controls">
+      <button id="btn-imu">Enable IMU</button>
+      <button id="btn-rot" disabled>Rotation: off</button>
+      <button id="btn-trans" disabled>Translation: off</button>
+    </div>
+    <div id="model-info">loading the model&hellip;</div>
+  </div>
 
   <a-scene
-    mindar-image="imageTargetSrc: ./assets/targets.mind; filterMinCF: 0.0001; filterBeta: 0.001;"
+    mindar-image="imageTargetSrc: ./assets/targets.mind; filterMinCF: 0.0001; filterBeta: 0.001; uiScanning: no;"
     color-space="sRGB"
     renderer="colorManagement: true; physicallyCorrectLights: true;"
     vr-mode-ui="enabled: false"
@@ -136,47 +325,109 @@
     <a-light type="ambient" intensity="0.8"></a-light>
     <a-light type="directional" intensity="0.6" position="1 1 1"></a-light>
 
-    <a-entity mindar-image-target="targetIndex: 0">
+    <!-- The anchor is EMPTY: it is only a sensor. See the imu-fusion
+         header comment for why the model cannot live under it. -->
+    <a-entity id="anchor" mindar-image-target="targetIndex: 0"></a-entity>
 
-      <!-- The marker's surface is the XY plane and +Z sticks out of it, but a
-           model's "up" is +Y. This wrapper turns the model to stand ON the
-           marker instead of lying flat in it. -->
+    <a-entity id="fused" imu-fusion="anchor: #anchor">
       <a-entity rotation="90 0 0">
-
         <a-entity
           gltf-model="./assets/Adventurer.glb"
-          fit-model="size: 0.6">
+          fit-model="size: 1.5">
         </a-entity>
-
-        <!-- ==== TASK 1: size ====
-             size: is in MARKER WIDTHS. 1.0 means as wide as the marker itself.
-             Try 0.2, then 2.0.
-             Why is that a better thing to ask for than a raw scale factor?
-             (Hint: the bottom of the screen tells you how big this model is in
-             its own units. Another model is 155. What single scale factor would
-             suit both?)
-
-             ==== TASK 2: rotation ====
-             Delete rotation="90 0 0" from the wrapper above.
-             Where does the model go, and why?
-
-             ==== TASK 3: bring your own model ====
-             Get a .glb from https://poly.pizza (search for anything, it is free).
-             Then in YOUR fork on GitHub, open the assets folder and use
-                Add file -> Upload files
-             and put the file name in gltf-model above.
-             Nothing else needs to change: it gets measured and sized for you.
-        -->
-
       </a-entity>
     </a-entity>
+
+    <!-- ==== TASKS ====
+         Everything here is about what happens AFTER the marker disappears:
+         find it first, then cover it completely with your hand or flip it over.
+
+         1. IMU off. Hide the marker. The model freezes — but glued to WHAT?
+            Rotate the phone and watch: it moves with the screen, not with
+            the room.
+         2. Tap "Enable IMU" and switch Rotation ON. Hide the marker, rotate
+            the phone again: now it stays put in the room. Then WALK half a
+            metre sideways. Why does it come along with you this time?
+         3. Switch Translation ON. Hide the marker, hold the phone as still
+            as you can, and just watch the drift number climb. Then try to
+            walk around the model. How many seconds until it is nonsense?
+            This is why no real AR system trusts an IMU alone for position
+            (look up: visual-inertial odometry) — and the snap when the
+            marker comes back is the localization correction doing its job.
+         4. The translation scale assumes your printed marker is 120 mm wide
+            (MARKER_WIDTH_M at the top of the script). Measure yours with a
+            ruler and fix the constant.
+    -->
+
   </a-scene>
 
   <script>
     const status = document.getElementById('status');
-    const target = document.querySelector('[mindar-image-target]');
-    target.addEventListener('targetFound', () => { status.textContent = '✅ Tracking Marker A'; });
-    target.addEventListener('targetLost', () => { status.textContent = '❌ Lost the marker'; });
+    const anchor = document.querySelector('#anchor');
+    const fusedEl = document.querySelector('#fused');
+    const btnImu = document.getElementById('btn-imu');
+    const btnRot = document.getElementById('btn-rot');
+    const btnTrans = document.getElementById('btn-trans');
+
+    const fusion = () => fusedEl.components['imu-fusion'];
+
+    let markerVisible = false;
+    anchor.addEventListener('targetFound', () => { markerVisible = true; });
+    anchor.addEventListener('targetLost', () => { markerVisible = false; });
+
+    btnImu.addEventListener('click', () => {
+      fusion().enable().then(() => {
+        btnImu.disabled = true;
+        btnImu.textContent = 'IMU: on';
+        btnRot.disabled = false;
+        btnTrans.disabled = false;
+      }).catch((err) => {
+        btnImu.textContent = 'IMU blocked (' + err.message + ')';
+      });
+    });
+
+    btnRot.addEventListener('click', () => {
+      const f = fusion();
+      f.rotationOn = !f.rotationOn;
+      btnRot.textContent = 'Rotation: ' + (f.rotationOn ? 'ON' : 'off');
+      btnRot.classList.toggle('on', f.rotationOn);
+    });
+
+    btnTrans.addEventListener('click', () => {
+      const f = fusion();
+      f.translationOn = !f.translationOn;
+      // Restart the integration when switched on: rotation-since-the-fix is
+      // real information, but displacement-since-the-fix is accumulated
+      // noise, and applying it retroactively would just teleport the model.
+      if (f.translationOn) { f.vel.set(0, 0, 0); f.disp.set(0, 0, 0); }
+      btnTrans.textContent = 'Translation: ' + (f.translationOn ? 'ON' : 'off');
+      btnTrans.classList.toggle('on', f.translationOn);
+    });
+
+    setInterval(() => {
+      const f = fusion();
+      if (!f) return;
+      if (markerVisible) {
+        status.textContent = '✅ Marker A — the marker corrects the pose';
+        return;
+      }
+      if (!f.hasFix) {
+        status.textContent = 'Looking for the marker…';
+        return;
+      }
+      const parts = [];
+      if (f.rotationOn) parts.push('rotation');
+      if (f.translationOn) parts.push('translation');
+      if (!parts.length) {
+        status.textContent = '❌ Marker lost — frozen at the last pose';
+      } else if (!f.haveOrientation) {
+        status.textContent = '❌ Marker lost — no IMU data yet?';
+      } else {
+        let text = '❌ Marker lost — coasting on IMU (' + parts.join(' + ') + ')';
+        if (f.translationOn) text += ' · drift ' + f.disp.length().toFixed(2) + ' m';
+        status.textContent = text;
+      }
+    }, 100);
   </script>
 </body>
 </html>

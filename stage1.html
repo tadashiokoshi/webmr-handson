@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Stage 1: Primitives | MR Hands-on</title>
+  <title>Stage 1: 3D Model | MR Hands-on</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
@@ -18,14 +18,111 @@
     }
     #hud a { color: #7cf; }
     #status { color: #fd6; }
+    #model-info {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
+      background: rgba(0, 0, 0, 0.78); color: #6f6;
+      font: 13px/1.5 monospace; padding: 8px 12px;
+      padding-bottom: calc(8px + env(safe-area-inset-bottom));
+      white-space: pre-wrap;
+    }
+    #model-info.error { color: #f77; }
   </style>
+
+  <script>
+    /* fit-model
+     *
+     * Makes any .glb work without you having to know anything about it first.
+     *
+     * Models come in whatever units their author felt like using. The one below
+     * is about 1.9 units tall; a model from Khronos is 155; one from poly.pizza
+     * is 84. A single hard-coded scale factor would make one of them microscopic
+     * and another the size of a building. So you do not give a scale factor at
+     * all: you say how big you want it to END UP, in marker widths, and this
+     * measures the model and works the rest out.
+     *
+     * What it measured is printed at the bottom of the screen. You are on a
+     * phone; you have no console.
+     */
+    AFRAME.registerComponent('fit-model', {
+      schema: {
+        size: { type: 'number', default: 0.6 }  // biggest dimension, in marker widths
+      },
+
+      init: function () {
+        this.info = document.querySelector('#model-info');
+        this.el.addEventListener('model-loaded', (e) => this.onLoad(e.detail.model));
+        this.el.addEventListener('model-error', () => {
+          this.report('could not load the model.\ncheck the file name, and that it really is in assets/', true);
+        });
+      },
+
+      report: function (text, isError) {
+        this.info.textContent = text;
+        this.info.classList.toggle('error', !!isError);
+      },
+
+      // Size of the model in its OWN units, walking only LOCAL matrices.
+      //
+      // Not world matrices. Until the marker has actually been seen, the anchor
+      // above us has a degenerate transform, so anything derived from
+      // matrixWorld either comes out zero or divides by it -- and the model
+      // finishes downloading at an unpredictable moment relative to the first
+      // sighting. Local matrices are true from the instant the model exists.
+      measure: function (model) {
+        const box = new THREE.Box3();
+        const part = new THREE.Box3();
+
+        const walk = (obj, parentMatrix) => {
+          obj.updateMatrix();
+          const matrix = new THREE.Matrix4().multiplyMatrices(parentMatrix, obj.matrix);
+          if (obj.geometry) {
+            if (!obj.geometry.boundingBox) obj.geometry.computeBoundingBox();
+            part.copy(obj.geometry.boundingBox).applyMatrix4(matrix);
+            box.union(part);
+          }
+          obj.children.forEach((child) => walk(child, matrix));
+        };
+        walk(model, new THREE.Matrix4());
+
+        return box;
+      },
+
+      onLoad: function (model) {
+        const box = this.measure(model);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const biggest = Math.max(size.x, size.y, size.z);
+        if (!(biggest > 0)) {
+          this.report('the model loaded but has no size. is it empty?', true);
+          return;
+        }
+
+        this.el.object3D.scale.setScalar(this.data.size / biggest);
+
+        // Centre it on the marker and stand it on the surface, rather than
+        // letting it half-sink into the paper.
+        const centre = new THREE.Vector3();
+        box.getCenter(centre);
+        model.position.x -= centre.x;
+        model.position.z -= centre.z;
+        model.position.y -= box.min.y;
+
+        this.report(
+          'this model is ' + biggest.toFixed(1) + ' units across.\n' +
+          'scaled by ' + (this.data.size / biggest).toFixed(4) +
+          ' to be ' + this.data.size + ' marker widths.'
+        );
+      }
+    });
+  </script>
 </head>
 <body>
 
   <div id="hud">
-    <b>Stage 1: Primitives</b> &mdash; point your camera at Marker A<br />
+    <b>Stage 1: 3D Model</b> &mdash; point your camera at Marker A<br />
     <span id="status">Looking for the marker&hellip;</span> &middot; <a href="./index.html">Back to hub</a>
   </div>
+  <div id="model-info">loading the model&hellip;</div>
 
   <a-scene
     mindar-image="imageTargetSrc: ./assets/targets.mind; filterMinCF: 0.0001; filterBeta: 0.001;"
@@ -36,51 +133,50 @@
 
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
-    <a-light type="ambient" intensity="1"></a-light>
+    <a-light type="ambient" intensity="0.8"></a-light>
+    <a-light type="directional" intensity="0.6" position="1 1 1"></a-light>
 
-    <!-- targetIndex 0 = Marker A.
-         Coordinates are normalised so the marker's WIDTH is exactly 1.
-         +X is right across the marker, +Y is up across the marker,
-         and +Z points OUT of the marker surface (toward you). So if the
-         marker is lying flat on a desk, +Z is the direction of "up". -->
     <a-entity mindar-image-target="targetIndex: 0">
 
-      <!-- ==== TASK 1: change these four values and reload ====
-           color    : any CSS colour, e.g. #ff0000
-           position : x y z. Increase z to lift the box off the marker
-           scale    : 1 would be exactly as wide as the marker
-           rotation : degrees
-      -->
-      <a-box
-        color="#4488ff"
-        position="0 0 0.25"
-        scale="0.5 0.5 0.5"
-        rotation="0 0 0"
-        animation="property: rotation; to: 0 0 360; dur: 4000; loop: true; easing: linear">
-      </a-box>
-      <!-- ==== end of TASK 1 ==== -->
+      <!-- The marker's surface is the XY plane and +Z sticks out of it, but a
+           model's "up" is +Y. This wrapper turns the model to stand ON the
+           marker instead of lying flat in it. -->
+      <a-entity rotation="90 0 0">
 
-      <!-- TASK 2: replace <a-box> with <a-sphere>, <a-cone>, <a-torus>
-           or <a-dodecahedron>. Keep the same attributes. -->
+        <a-entity
+          gltf-model="./assets/Adventurer.glb"
+          fit-model="size: 0.6">
+        </a-entity>
 
-      <!-- TASK 3: the animation above spins the box around the Z axis
-           (the axis sticking out of the marker). Change "to" to
-           "0 360 0" and explain what changed, and why. -->
+        <!-- ==== TASK 1: size ====
+             size: is in MARKER WIDTHS. 1.0 means as wide as the marker itself.
+             Try 0.2, then 2.0.
+             Why is that a better thing to ask for than a raw scale factor?
+             (Hint: the bottom of the screen tells you how big this model is in
+             its own units. Another model is 155. What single scale factor would
+             suit both?)
 
+             ==== TASK 2: rotation ====
+             Delete rotation="90 0 0" from the wrapper above.
+             Where does the model go, and why?
+
+             ==== TASK 3: bring your own model ====
+             Get a .glb from https://poly.pizza (search for anything, it is free).
+             Then in YOUR fork on GitHub, open the assets folder and use
+                Add file -> Upload files
+             and put the file name in gltf-model above.
+             Nothing else needs to change: it gets measured and sized for you.
+        -->
+
+      </a-entity>
     </a-entity>
   </a-scene>
 
   <script>
-    // Surface tracking state, so the moment tracking BREAKS is visible.
-    // That failure is the point of the exercise, not a bug.
     const status = document.getElementById('status');
     const target = document.querySelector('[mindar-image-target]');
-    target.addEventListener('targetFound', () => {
-      status.textContent = '✅ Tracking Marker A';
-    });
-    target.addEventListener('targetLost', () => {
-      status.textContent = '❌ Lost the marker';
-    });
+    target.addEventListener('targetFound', () => { status.textContent = '✅ Tracking Marker A'; });
+    target.addEventListener('targetLost', () => { status.textContent = '❌ Lost the marker'; });
   </script>
 </body>
 </html>

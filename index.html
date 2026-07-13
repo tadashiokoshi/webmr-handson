@@ -8,129 +8,27 @@
     :root { color-scheme: light dark; }
     body {
       font-family: system-ui, sans-serif;
-      line-height: 1.7; font-size: 17px;
-      max-width: 44em; margin: 0 auto; padding: 24px 20px 64px;
+      max-width: 24em; margin: 0 auto; padding: 48px 20px;
+      display: flex; flex-direction: column; gap: 14px;
     }
-    h1 { font-size: 30px; margin-bottom: 0; }
-    h2 { margin-top: 40px; border-bottom: 2px solid currentColor; padding-bottom: 4px; }
-    .lede { color: #666; margin-top: 4px; }
-    .stages { display: grid; gap: 12px; margin: 20px 0; }
-    .stages a {
-      display: block; padding: 16px 18px; border: 2px solid #06c; border-radius: 10px;
-      text-decoration: none; font-weight: 600; font-size: 19px;
+    h1 { font-size: 28px; text-align: center; margin: 0 0 24px; }
+    a.btn {
+      display: block; padding: 18px; text-align: center;
+      border: 2px solid #06c; border-radius: 12px;
+      text-decoration: none; font-weight: 600; font-size: 19px; color: #06c;
     }
-    .stages a small { display: block; font-weight: 400; font-size: 15px; color: #666; }
-    code { background: rgba(128,128,128,.18); padding: 1px 5px; border-radius: 4px; }
-    ol li, ul li { margin: 8px 0; }
-    .warn { border-left: 4px solid #e80; padding: 4px 0 4px 14px; margin: 16px 0; }
-    a { color: #06c; }
+    a.btn.minor { font-size: 15px; padding: 12px; opacity: 0.75; }
   </style>
 </head>
 <body>
 
   <h1>MR Hands-on</h1>
-  <p class="lede">Web-based augmented reality that runs in your phone's browser.
-    No app, no headset. You will change the code yourself and watch it break.</p>
 
-  <h2>Before class</h2>
-  <p>Do this at home. It takes about ten minutes, and if you skip it you will
-    spend the lab watching someone else's phone.</p>
-  <ol>
-    <li>Create a GitHub account, if you do not have one.</li>
-    <li>Open the repository link posted on the course page and press <b>Fork</b>.
-      You now have your own copy.</li>
-    <li>In <b>your</b> fork: <b>Settings → Pages</b>. Under "Build and deployment",
-      set <b>Source: Deploy from a branch</b>, <b>Branch: main</b>, folder <code>/ (root)</code>,
-      and press <b>Save</b>.</li>
-    <li>Wait about a minute. Your copy is now live at
-      <br /><code>https://&lt;your-github-username&gt;.github.io/&lt;repository-name&gt;/</code></li>
-    <li><b>Open that address on your phone</b> and check that Stage 1 asks for the
-      camera. Bookmark it. This is the only address you need in class.</li>
-  </ol>
-  <p class="warn">
-    The camera only works over <code>https://</code>. Opening the HTML file
-    directly from your laptop's disk will never work &mdash; that is not a bug
-    in the code, it is the browser refusing to hand a local file your camera.
-  </p>
+  <a class="btn" href="./stage1.html">Stage 1 &middot; 3D Model</a>
+  <a class="btn" href="./stage2.html">Stage 2 &middot; Marker + IMU</a>
+  <a class="btn" href="./stage3.html">Stage 3 &middot; Build a Scene</a>
 
-  <h2>Markers</h2>
-  <p>Two markers, A and B. Print them or show them on a screen &mdash;
-    <a href="./markers.html">marker sheet</a>. Paper works better than a screen:
-    a screen adds glare and flicker that the tracker has to fight.</p>
-
-  <h2>The stages</h2>
-  <div class="stages">
-    <a href="./stage1.html">Stage 1 &middot; Primitives
-      <small>Put a box on Marker A. Change its colour, size, position, spin.</small></a>
-    <a href="./stage2.html">Stage 2 &middot; 3D model
-      <small>Put a real 3D model on the marker &mdash; bring your own.</small></a>
-    <a href="./stage3.html">Stage 3 &middot; Marker + IMU
-      <small>Hide the marker on purpose. Freeze the model, or let the phone's
-        motion sensors carry it &mdash; rotation and translation, separately.</small></a>
-    <a href="./stage4.html">Stage 4 &middot; Two markers
-      <small>Track A and B at once. Make them react when they get close.</small></a>
-  </div>
-
-  <h2>Bring your own 3D model</h2>
-  <p>Stage 2 will show any model you give it. Get one from
-    <a href="https://poly.pizza">poly.pizza</a> &mdash; search for anything, it is free
-    and needs no account. You want the <code>.glb</code> file.</p>
-  <p><b>To install it:</b> in <b>your fork</b> on GitHub, open the <code>assets</code>
-    folder, then <b>Add file → Upload files</b>, drop the <code>.glb</code> in, and
-    commit. Then put its file name into <code>stage2.html</code>. Nothing else needs
-    changing &mdash; the page measures the model and sizes it for you, whatever units
-    its author used.</p>
-
-  <h2>How to change the code</h2>
-  <ol>
-    <li>On your laptop, open <b>your fork</b> on GitHub and click the file you want
-      (for example <code>stage1.html</code>).</li>
-    <li>Click the pencil icon, edit, then <b>Commit changes</b>.</li>
-    <li>Wait roughly <b>30&ndash;60 seconds</b> &mdash; GitHub has to republish the page &mdash;
-      then reload on your phone.</li>
-  </ol>
-  <p>That wait is real, so batch your edits: change three things, then commit once.
-    While you wait, do the observations below.</p>
-
-  <h2>Observe how it breaks</h2>
-  <p>All of these are supposed to fail. Failing is the experiment. For each one,
-    note <i>what</i> happened and <i>why</i>, and connect it to the problems from
-    the first lecture.</p>
-  <ol>
-    <li><b>Tilt.</b> Slowly tilt the marker away from the camera. At roughly what
-      angle does tracking die? Why does a flat pattern become hard to recognise
-      when you look at it edge-on?</li>
-    <li><b>Occlusion of the marker.</b> Cover half the marker with your hand.
-      Does it survive? Now cover 90%. Where is the limit?</li>
-    <li><b>Light.</b> Dim the room. Then put a bright light or window directly
-      behind the marker. Which one hurts more, and why?</li>
-    <li><b>Occlusion of the object.</b> Put your hand <i>between</i> the phone and
-      the virtual object. Does your hand pass in front of it, or does the object
-      float on top of your hand? Which of the MR problems from lecture 1 is this?</li>
-    <li><b>Lighting consistency.</b> Does the virtual object look like it is lit by
-      the same light as the room around it? What would you need to know about the
-      room to make it look right?</li>
-    <li><b>Motion.</b> Shake the phone, or move it fast. Does the object stay glued
-      to the marker, or lag behind and swim?</li>
-    <li><b>Units (stage 4).</b> The readout says "marker widths". A distance of
-      1.0 means the two markers are exactly touching. Why is that a more useful
-      unit here than centimetres?</li>
-  </ol>
-
-  <h2>If it does not work</h2>
-  <ul>
-    <li><b>No camera prompt.</b> Check the address really starts with
-      <code>https://</code>. On iPhone, Safari asks once per site; if you said no,
-      go to <b>Settings → Safari → Camera</b> and reset it, then reload.</li>
-    <li><b>Black screen.</b> Another tab or app probably still holds the camera.
-      Close the others and reload.</li>
-    <li><b>Camera is on but nothing appears.</b> Fill more of the frame with the
-      marker, hold it flatter, and give it better light.</li>
-    <li><b>Your edit does nothing.</b> Did the republish finish? Check the
-      <b>Actions</b> tab of your fork. Also try a hard reload.</li>
-    <li><b>You broke it beyond repair.</b> On GitHub, open the file's <b>History</b>
-      and revert to an earlier version. Nothing here is precious.</li>
-  </ul>
+  <a class="btn minor" href="./markers.html">Markers (print me)</a>
 
 </body>
 </html>
