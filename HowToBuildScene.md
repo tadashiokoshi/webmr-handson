@@ -12,15 +12,11 @@
 Everything goes inside `#world`. Inside it, **1 unit = 1 metre**.
 
 ```html
-<a-entity id="world" real-units>
-
-  <a-entity
-    gltf-model="./assets/Wolf.glb"
-    fit-model="size: 0.25"
-    position="0.30 0 -0.20"
-    rotation="0 45 0">
-  </a-entity>
-
+<a-entity
+  gltf-model="./assets/{your model}.glb"
+  fit-model="size: {size}"
+  position="{x} {y} {z}"
+  rotation="{pitch} {yaw} {roll}">
 </a-entity>
 ```
 
